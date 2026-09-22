@@ -10,7 +10,7 @@
         var verEl = document.getElementById('app-boot-ver')
         var logEl = document.getElementById('app-boot-log')
         var envEl = document.getElementById('app-boot-env')
-        var bootTag = '20260825a'
+        var bootTag = '20260922a'
 
         function apiUrl(p) {
           try {
