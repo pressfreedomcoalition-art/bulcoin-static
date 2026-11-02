@@ -10,7 +10,7 @@
         var verEl = document.getElementById('app-boot-ver')
         var logEl = document.getElementById('app-boot-log')
         var envEl = document.getElementById('app-boot-env')
-        var bootTag = '20260922a'
+        var bootTag = '20261102a'
 
         function apiUrl(p) {
           try {
@@ -656,6 +656,124 @@
         }
         window.__bulcoinBootProgress(14, 'Загрузка…')
         startTick()
+
+        /**
+         * Overlap API host probe with app.js download/parse.
+         * Same policy as frontend/src/lib/origin.ts — prefer primary when OK;
+         * do not wait full timeout for a blocked peer.
+         */
+        ;(function earlyApiProbe() {
+          try {
+            if (window.__BULCOIN_API_PIN__) return
+            var primary = String(window.__BULCOIN_API_ORIGIN__ || 'https://miniapp.blc.cab').replace(
+              /\/+$/,
+              ''
+            )
+            var fallbacks = window.__BULCOIN_API_FALLBACKS__
+            var fallback = primary
+            if (fallbacks && fallbacks.length) {
+              for (var fi = 0; fi < fallbacks.length; fi++) {
+                var f = String(fallbacks[fi] || '').replace(/\/+$/, '')
+                if (f && f !== primary) {
+                  fallback = f
+                  break
+                }
+              }
+            }
+            if (fallback === primary) fallback = 'https://api.won-onl.ru'
+            if (fallback === primary) return
+
+            var settled = false
+            var primaryDone = false
+            var fallbackDone = false
+            var primaryOk = false
+            var fallbackOk = false
+            var graceTimer = null
+            var xhrs = []
+
+            function pin(origin) {
+              if (settled) return
+              settled = true
+              if (graceTimer) window.clearTimeout(graceTimer)
+              for (var i = 0; i < xhrs.length; i++) {
+                try {
+                  xhrs[i].abort()
+                } catch (eAb) {}
+              }
+              window.__BULCOIN_API_PIN__ = origin
+              window.__BULCOIN_MEDIA_ORIGIN__ = origin
+              pushStep('api:early-pin', origin.replace(/^https?:\/\//, ''))
+              try {
+                window.__bulcoinBootProgress(22, 'Сервер…')
+              } catch (ePr) {}
+            }
+
+            function maybeFinish() {
+              if (settled) return
+              if (primaryOk) {
+                pin(primary)
+                return
+              }
+              if (fallbackOk && primaryDone) {
+                pin(fallback)
+                return
+              }
+              if (fallbackOk && !primaryDone && graceTimer == null) {
+                graceTimer = window.setTimeout(function () {
+                  if (settled) return
+                  if (primaryOk) pin(primary)
+                  else pin(fallback)
+                }, 450)
+              }
+              if (primaryDone && fallbackDone) {
+                pin(primaryOk ? primary : fallbackOk ? fallback : primary)
+              }
+            }
+
+            function ping(origin, isPrimary) {
+              try {
+                var xhr = new XMLHttpRequest()
+                xhrs.push(xhr)
+                xhr.open('GET', origin + '/api/health', true)
+                xhr.timeout = 5000
+                xhr.onload = function () {
+                  var ok = false
+                  try {
+                    if (xhr.status >= 200 && xhr.status < 300) {
+                      var j = JSON.parse(xhr.responseText || '{}')
+                      ok = j && j.status === 'ok'
+                    }
+                  } catch (eJ) {}
+                  if (isPrimary) {
+                    primaryOk = ok
+                    primaryDone = true
+                  } else {
+                    fallbackOk = ok
+                    fallbackDone = true
+                  }
+                  maybeFinish()
+                }
+                xhr.onerror = xhr.ontimeout = xhr.onabort = function () {
+                  if (isPrimary) {
+                    primaryDone = true
+                  } else {
+                    fallbackDone = true
+                  }
+                  maybeFinish()
+                }
+                xhr.send()
+              } catch (eX) {
+                if (isPrimary) primaryDone = true
+                else fallbackDone = true
+                maybeFinish()
+              }
+            }
+
+            pushStep('api:early-probe', 'health')
+            ping(primary, true)
+            ping(fallback, false)
+          } catch (eProbe) {}
+        })()
 
         // Stuck at 0% with no JS progress → report + hard fail early (Huawei)
         window.setTimeout(function () {
